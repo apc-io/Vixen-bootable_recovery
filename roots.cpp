@@ -176,6 +176,17 @@ int ensure_path_mounted(const char* path) {
             return -1;
         }
         return mtd_mount_partition(partition, v->mount_point, v->fs_type, 0);
+    } else if (strcmp(v->fs_type, "ubifs") == 0) {
+        // mount an MTD partition as a UBIFS filesystem.
+        mtd_scan_partitions();
+        const MtdPartition* partition;
+        partition = mtd_find_partition_by_name(v->device);
+        if (partition == NULL) {
+            LOGE("failed to find \"%s\" partition to mount at \"%s\"\n",
+                 v->device, v->mount_point);
+            return -1;
+        }
+        return mtd_mount_partition(partition, v->mount_point, v->fs_type, 0);
     } else if (strcmp(v->fs_type, "ext4") == 0 ||
                strcmp(v->fs_type, "vfat") == 0) {
         result = mount(v->device, v->mount_point, v->fs_type,
@@ -200,6 +211,7 @@ int ensure_path_mounted(const char* path) {
 
 int ensure_path_unmounted(const char* path) {
     Volume* v = volume_for_path(path);
+    int ret;
     if (v == NULL) {
         LOGE("unknown volume for path [%s]\n", path);
         return -1;
@@ -223,7 +235,13 @@ int ensure_path_unmounted(const char* path) {
         return 0;
     }
 
-    return unmount_mounted_volume(mv);
+    ret = unmount_mounted_volume(mv);
+    if (ret == 0) {
+    	const MtdPartition* partition;
+			partition = mtd_find_partition_by_name(v->device);
+			ret = mtd_unmount_partition(partition, v->mount_point, v->fs_type);
+    }
+    return ret;
 }
 
 int format_volume(const char* volume) {
@@ -247,7 +265,7 @@ int format_volume(const char* volume) {
         return -1;
     }
 
-    if (strcmp(v->fs_type, "yaffs2") == 0 || strcmp(v->fs_type, "mtd") == 0) {
+    if (strcmp(v->fs_type, "yaffs2") == 0 || strcmp(v->fs_type, "mtd") == 0 || strcmp(v->fs_type, "ubifs") == 0) {
         mtd_scan_partitions();
         const MtdPartition* partition = mtd_find_partition_by_name(v->device);
         if (partition == NULL) {
@@ -259,7 +277,7 @@ int format_volume(const char* volume) {
         if (write == NULL) {
             LOGW("format_volume: can't open MTD \"%s\"\n", v->device);
             return -1;
-        } else if (mtd_erase_blocks(write, -1) == (off_t) -1) {
+        } else if (mtd_erase_blocks(write, -1) == (off64_t) -1) {
             LOGW("format_volume: can't erase MTD \"%s\"\n", v->device);
             mtd_write_close(write);
             return -1;

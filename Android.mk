@@ -25,14 +25,16 @@ LOCAL_SRC_FILES := \
     ui.cpp \
     screen_ui.cpp \
     verifier.cpp \
-    adb_install.cpp
+    adb_install.cpp \
+    rsa_verify.cpp \
+    bignum.cpp
 
 LOCAL_MODULE := recovery
 
 LOCAL_FORCE_STATIC_EXECUTABLE := true
 
 RECOVERY_API_VERSION := 3
-LOCAL_CFLAGS += -DRECOVERY_API_VERSION=$(RECOVERY_API_VERSION)
+LOCAL_CFLAGS += -DRECOVERY_API_VERSION=$(RECOVERY_API_VERSION) 
 
 LOCAL_STATIC_LIBRARIES := \
     libext4_utils_static \
@@ -48,7 +50,8 @@ LOCAL_STATIC_LIBRARIES := \
     libcutils \
     libstdc++ \
     libm \
-    libc
+    libc \
+    libwmtenv_static
 
 ifeq ($(TARGET_USERIMAGES_USE_EXT4), true)
     LOCAL_CFLAGS += -DUSE_EXT4
@@ -62,11 +65,13 @@ ifeq ($(HAVE_SELINUX), true)
   LOCAL_CFLAGS += -DHAVE_SELINUX
 endif # HAVE_SELINUX
 
+
 # This binary is in the recovery ramdisk, which is otherwise a copy of root.
 # It gets copied there in config/Makefile.  LOCAL_MODULE_TAGS suppresses
 # a (redundant) copy of the binary in /system/bin for user builds.
 # TODO: Build the ramdisk image in a more principled way.
-LOCAL_MODULE_TAGS := eng
+
+LOCAL_MODULE_TAGS := optional
 
 ifeq ($(TARGET_RECOVERY_UI_LIB),)
   LOCAL_SRC_FILES += default_device.cpp
@@ -81,6 +86,7 @@ ifeq ($(HAVE_SELINUX),true)
 endif # HAVE_SELINUX
 
 LOCAL_C_INCLUDES += system/extras/ext4_utils
+LOCAL_CFLAGS += -DPOLARSSL_GENPRIME
 
 include $(BUILD_EXECUTABLE)
 
@@ -101,6 +107,19 @@ LOCAL_STATIC_LIBRARIES := \
     libstdc++ \
     libc
 include $(BUILD_EXECUTABLE)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := rsapublickey_test
+LOCAL_FORCE_STATIC_EXECUTABLE := true
+LOCAL_SRC_FILES := \
+    rsa2rsapubickey_test.cpp \
+    rsa_verify.cpp \
+    bignum.cpp
+
+ 
+LOCAL_CFLAGS += -DPOLARSSL_GENPRIME
+include $(BUILD_HOST_EXECUTABLE)
+
 
 
 include $(LOCAL_PATH)/minui/Android.mk \

@@ -43,8 +43,7 @@ double pow(double x, double y) {
     return x * y;
 }
 
-int res_create_surface(const char* name, gr_surface* pSurface) {
-    char resPath[256];
+int res_create_surface_internal(const char* resPath, gr_surface* pSurface) {
     GGLSurface* surface = NULL;
     int result = 0;
     unsigned char header[8];
@@ -53,8 +52,6 @@ int res_create_surface(const char* name, gr_surface* pSurface) {
 
     *pSurface = NULL;
 
-    snprintf(resPath, sizeof(resPath)-1, "/res/images/%s.png", name);
-    resPath[sizeof(resPath)-1] = '\0';
     FILE* fp = fopen(resPath, "rb");
     if (fp == NULL) {
         result = -1;
@@ -173,6 +170,24 @@ exit:
         }
     }
     return result;
+}
+
+int res_create_surface(const char* name, gr_surface* pSurface) {
+    char resPath[256];
+    
+    snprintf(resPath, sizeof(resPath)-1, "/res/images/%s.png", name);
+    resPath[sizeof(resPath)-1] = '\0';
+    
+    return res_create_surface_internal(resPath, pSurface);
+}
+
+int res_create_surface_by_path(const char* path, gr_surface* pSurface) {
+    char resPath[256];
+    
+    snprintf(resPath, sizeof(resPath)-1, "%s.png", path);
+    resPath[sizeof(resPath)-1] = '\0';
+    
+    return res_create_surface_internal(resPath, pSurface);
 }
 
 static int matches_locale(const char* loc) {

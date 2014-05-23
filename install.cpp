@@ -22,6 +22,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "rsa/rsa.h"
+#include "rsa/x509.h"
+
 #include "common.h"
 #include "install.h"
 #include "mincrypt/rsa.h"
@@ -38,6 +41,11 @@ extern RecoveryUI* ui;
 
 #define ASSUMED_UPDATE_BINARY_NAME  "META-INF/com/google/android/update-binary"
 #define PUBLIC_KEYS_FILE "/res/keys"
+
+#define PUBLIC_KEY_ENV_NAME "wmt.rsa.pem"
+#define PUBLIC_KEY_TMEPORARY "/tmp/rsa.public.key"
+
+
 
 // Default allocation of progress bar segments to operations
 static const int VERIFICATION_PROGRESS_TIME = 60;
@@ -274,6 +282,164 @@ exit:
     return NULL;
 }
 
+extern "C" int wmt_getsyspara(const char	*varname,	char *varval,	int	*varlen);
+
+
+//32 bit limb
+uint32_t mpi_get_word(mpi * x){
+    // 4 bytes
+	if (mpi_size(x) > 4)
+		return 0xffffffff;
+	else
+        return x->p[0];
+	//return 0;   
+}
+
+
+/* Convert OpenSSL RSA public key to android pre-computed RSAPublicKey format */
+
+int RSA_to_RSAPublicKey(rsa_context *rsa, RSAPublicKey *pkey)
+{
+    int ret = 1;
+    unsigned int i;
+    mpi r32;
+    mpi rr;
+    mpi r;
+    mpi rem;
+    mpi n;
+    mpi n0inv;
+    mpi divid;
+
+    mpi_init(&r32);
+    mpi_init(&rr);
+    mpi_init(&r);
+    mpi_init(&rem);
+    mpi_init(&n);
+    mpi_init(&n0inv);
+    mpi_init(&divid);
+
+    
+    if(rsa->len != RSANUMBYTES){
+       ret = 0;
+       goto out;
+    }
+
+    mpi_set_bit(&r32, 32, 1);
+    mpi_copy(&n, &rsa->N);
+    mpi_set_bit(&r, RSANUMWORDS * 32, 1);
+
+    mpi_lset(&rr, 1 );
+    mpi_shift_l(&rr, rsa->N.n * 2 * 32);
+    mpi_mod_mpi(&rr, &rr, &rsa->N);
+    
+    mpi_div_mpi(NULL, &rem ,&n, &r32);
+    mpi_inv_mod(&n0inv, &rem, &r32);
+
+    pkey->len = RSANUMWORDS;
+    pkey->n0inv = 0 - mpi_get_word(&n0inv);
+
+    for (i = 0; i < RSANUMWORDS; i++) {
+        mpi_div_mpi(&divid, &rem, &rr, &r32);
+        pkey->rr[i] = mpi_get_word(&rem);
+        mpi_copy(&rr, &divid);
+        mpi_div_mpi(&divid, &rem, &n, &r32);
+        pkey->n[i] = mpi_get_word(&rem);
+        mpi_copy(&n, &divid);
+    }
+    pkey->exponent = mpi_get_word(&rsa->E);
+        
+out:
+    mpi_free(&r32);
+    mpi_free(&rr);
+    mpi_free(&r);
+    mpi_free(&rem);
+    mpi_free(&n);
+    mpi_free(&n0inv);
+    mpi_free(&divid);
+    
+    return ret;
+}
+
+static void dumpKey(const char *dumpFile, RSAPublicKey *pkey){
+   FILE * file = fopen(dumpFile, "w+");
+   if(file != NULL){
+       int version=1;
+       if(pkey->exponent == 3){
+           version = 1;
+       }else if(pkey->exponent == 65537){
+           version = 2;
+       }else{
+          LOGE("unknown public key exponent\n");
+          goto END;     
+       }
+
+       if(pkey->len != RSANUMWORDS){
+          LOGE("unknown key length\n");
+          goto END;
+       }
+
+       if(version > 1){
+           fprintf(file, "v%d", pkey->exponent);
+       }
+
+       fprintf(file, "{%d,", RSANUMWORDS);
+       fprintf(file, "0x%x,{", pkey->n0inv);
+
+       for(int i = 0; i < RSANUMWORDS; i++){
+           fprintf(file, "%u", pkey->n[i]);
+           if(i < RSANUMWORDS - 1)
+             fprintf(file, ",");
+       }
+
+       fprintf(file, "},{");
+
+       for(int i = 0; i < RSANUMWORDS; i++){
+           fprintf(file, "%u", pkey->rr[i]);
+           if(i < RSANUMWORDS - 1)
+             fprintf(file, ",");           
+       }
+
+       fprintf(file, "}}\n");
+END:       
+       fclose(file);
+   }
+}
+
+static RSAPublicKey* load_key_from_env(int *numKeys){
+
+     char envval[512]={0};
+     int  envvallen=sizeof(envval);
+     RSAPublicKey *pubkey = NULL;
+     rsa_context rsa;
+
+     *numKeys = 0;
+     if(wmt_getsyspara(PUBLIC_KEY_ENV_NAME, envval, &envvallen)){
+         //fail to get public key env
+         LOGE("fail to load public key!\n");
+         return NULL;
+     }
+    
+     rsa_init(&rsa, RSA_PKCS_V15, 0);
+     if(x509parse_public_key(&rsa, (unsigned char*)envval, envvallen) != 0){
+        rsa_free(&rsa);
+        return NULL;
+     }
+
+     pubkey = (RSAPublicKey *)malloc(sizeof(RSAPublicKey));
+
+     RSA_to_RSAPublicKey(&rsa, pubkey);
+
+     //for debug
+     dumpKey(PUBLIC_KEY_TMEPORARY, pubkey);
+     
+     rsa_free(&rsa);
+     *numKeys = 1;
+end:
+
+     return pubkey;
+
+}
+
 static int
 really_install_package(const char *path, int* wipe_cache)
 {
@@ -290,12 +456,18 @@ really_install_package(const char *path, int* wipe_cache)
     ui->Print("Opening update package...\n");
 
     int numKeys;
-    RSAPublicKey* loadedKeys = load_keys(PUBLIC_KEYS_FILE, &numKeys);
-    if (loadedKeys == NULL) {
-        LOGE("Failed to load keys\n");
-        return INSTALL_CORRUPT;
+    LOGI("trying to load keys\n");
+    RSAPublicKey* loadedKeys = load_key_from_env(&numKeys);
+    if(loadedKeys == NULL){
+       loadedKeys = load_keys(PUBLIC_KEYS_FILE, &numKeys);
+        if (loadedKeys == NULL) {
+            LOGE("Failed to load keys\n");
+            return INSTALL_CORRUPT;
+        }
+        LOGI("%d key(s) loaded from %s\n", numKeys, PUBLIC_KEYS_FILE);
+    }else{
+        LOGI("1 key loaded form env\n");
     }
-    LOGI("%d key(s) loaded from %s\n", numKeys, PUBLIC_KEYS_FILE);
 
     // Give verification half the progress bar...
     ui->Print("Verifying update package...\n");

@@ -4,13 +4,15 @@ on early-init
     start ueventd
 
 on init
-    export PATH /sbin
+    export PATH /sbin:/bin:/vendor/bin:/system/sbin:/system/bin:/system/xbin:/usr/bin:/usr/sbin
     export ANDROID_ROOT /system
     export ANDROID_DATA /data
     export EXTERNAL_STORAGE /sdcard
 
     symlink /system/etc /etc
 
+    mkdir /storage
+    mkdir /storage/sdcard1
     mkdir /sdcard
     mkdir /system
     mkdir /data
@@ -37,6 +39,10 @@ on boot
 
     class_start default
 
+
+service console /bin/sh
+    console
+    group log
 service ueventd /sbin/ueventd
     critical
 

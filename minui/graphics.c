@@ -36,12 +36,18 @@
 #if defined(RECOVERY_BGRA)
 #define PIXEL_FORMAT GGL_PIXEL_FORMAT_BGRA_8888
 #define PIXEL_SIZE   4
+static enum GGLPixelFormat pixel_format = GGL_PIXEL_FORMAT_BGRA_8888;
+static int pixel_size = 4;
 #elif defined(RECOVERY_RGBX)
 #define PIXEL_FORMAT GGL_PIXEL_FORMAT_RGBX_8888
 #define PIXEL_SIZE   4
+static enum GGLPixelFormat pixel_format = GGL_PIXEL_FORMAT_RGBX_8888;
+static int pixel_size = 4;
 #else
 #define PIXEL_FORMAT GGL_PIXEL_FORMAT_RGB_565
 #define PIXEL_SIZE   2
+static enum GGLPixelFormat pixel_format = GGL_PIXEL_FORMAT_RGB_565;
+static int pixel_size = 2;
 #endif
 
 #define NUM_BUFFERS 2
@@ -84,8 +90,20 @@ static int get_framebuffer(GGLSurface *fb)
         return -1;
     }
 
-    vi.bits_per_pixel = PIXEL_SIZE * 8;
-    if (PIXEL_FORMAT == GGL_PIXEL_FORMAT_BGRA_8888) {
+	if(vi.bits_per_pixel == 16) {
+		pixel_format = GGL_PIXEL_FORMAT_RGB_565;
+		pixel_size = 2;
+	} else {
+		if (PIXEL_FORMAT == GGL_PIXEL_FORMAT_RGBX_8888) 
+			pixel_format = GGL_PIXEL_FORMAT_RGBX_8888;
+		else
+			pixel_format = GGL_PIXEL_FORMAT_BGRA_8888;
+			
+		pixel_size = 4;
+	}
+	
+    vi.bits_per_pixel = pixel_size * 8;
+    if (pixel_format == GGL_PIXEL_FORMAT_BGRA_8888) {
       vi.red.offset     = 8;
       vi.red.length     = 8;
       vi.green.offset   = 16;
@@ -94,7 +112,7 @@ static int get_framebuffer(GGLSurface *fb)
       vi.blue.length    = 8;
       vi.transp.offset  = 0;
       vi.transp.length  = 8;
-    } else if (PIXEL_FORMAT == GGL_PIXEL_FORMAT_RGBX_8888) {
+    } else if (pixel_format == GGL_PIXEL_FORMAT_RGBX_8888) {
       vi.red.offset     = 24;
       vi.red.length     = 8;
       vi.green.offset   = 16;
@@ -118,7 +136,7 @@ static int get_framebuffer(GGLSurface *fb)
         close(fd);
         return -1;
     }
-
+	
     if (ioctl(fd, FBIOGET_FSCREENINFO, &fi) < 0) {
         perror("failed to get fb0 info");
         close(fd);
@@ -135,9 +153,9 @@ static int get_framebuffer(GGLSurface *fb)
     fb->version = sizeof(*fb);
     fb->width = vi.xres;
     fb->height = vi.yres;
-    fb->stride = fi.line_length/PIXEL_SIZE;
+    fb->stride = fi.line_length/pixel_size;
     fb->data = bits;
-    fb->format = PIXEL_FORMAT;
+    fb->format = pixel_format;
     memset(fb->data, 0, vi.yres * fi.line_length);
 
     fb++;
@@ -151,9 +169,9 @@ static int get_framebuffer(GGLSurface *fb)
     fb->version = sizeof(*fb);
     fb->width = vi.xres;
     fb->height = vi.yres;
-    fb->stride = fi.line_length/PIXEL_SIZE;
+    fb->stride = fi.line_length/pixel_size;
     fb->data = (void*) (((unsigned) bits) + vi.yres * fi.line_length);
-    fb->format = PIXEL_FORMAT;
+    fb->format = pixel_format;
     memset(fb->data, 0, vi.yres * fi.line_length);
 
     return fd;
@@ -163,9 +181,9 @@ static void get_memory_surface(GGLSurface* ms) {
   ms->version = sizeof(*ms);
   ms->width = vi.xres;
   ms->height = vi.yres;
-  ms->stride = fi.line_length/PIXEL_SIZE;
+  ms->stride = fi.line_length/pixel_size;
   ms->data = malloc(fi.line_length * vi.yres);
-  ms->format = PIXEL_FORMAT;
+  ms->format = pixel_format;
 }
 
 static void set_active_framebuffer(unsigned n)
@@ -173,7 +191,7 @@ static void set_active_framebuffer(unsigned n)
     if (n > 1 || !double_buffering) return;
     vi.yres_virtual = vi.yres * NUM_BUFFERS;
     vi.yoffset = n * vi.yres;
-    vi.bits_per_pixel = PIXEL_SIZE * 8;
+    vi.bits_per_pixel = pixel_size * 8;
     if (ioctl(gr_fb_fd, FBIOPUT_VSCREENINFO, &vi) < 0) {
         perror("active fb swap failed");
     }
@@ -400,9 +418,11 @@ gr_pixel *gr_fb_data(void)
 
 void gr_fb_blank(bool blank)
 {
+#if 0
     int ret;
 
     ret = ioctl(gr_fb_fd, FBIOBLANK, blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK);
     if (ret < 0)
         perror("ioctl(): blank");
+#endif	
 }

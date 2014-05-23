@@ -34,7 +34,7 @@ static const char* ITEMS[] =  {"reboot system now",
 class DefaultUI : public ScreenRecoveryUI {
   public:
     virtual KeyAction CheckKey(int key) {
-        if (key == KEY_HOME) {
+        if ((key == KEY_HOME) || (key == KEY_MENU)) {
             return TOGGLE;
         }
         return ENQUEUE;
@@ -61,6 +61,7 @@ class DefaultDevice : public Device {
                 return kHighlightUp;
 
               case KEY_ENTER:
+              case KEY_POWER:
                 return kInvokeItem;
             }
         }

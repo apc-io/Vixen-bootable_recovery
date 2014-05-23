@@ -38,7 +38,7 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := main.c
 LOCAL_MODULE := applypatch_static
 LOCAL_FORCE_STATIC_EXECUTABLE := true
-LOCAL_MODULE_TAGS := eng
+LOCAL_MODULE_TAGS := optional
 LOCAL_C_INCLUDES += bootable/recovery
 LOCAL_STATIC_LIBRARIES += libapplypatch libmtdutils libmincrypt libbz libminelf
 LOCAL_STATIC_LIBRARIES += libz libcutils libstdc++ libc
@@ -54,3 +54,14 @@ LOCAL_C_INCLUDES += external/zlib external/bzip2
 LOCAL_STATIC_LIBRARIES += libz libbz
 
 include $(BUILD_HOST_EXECUTABLE)
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := android_imgdiff.c utils.c bsdiff.c
+LOCAL_MODULE := imgdiff
+#LOCAL_FORCE_STATIC_EXECUTABLE := true
+LOCAL_MODULE_TAGS := optional
+LOCAL_C_INCLUDES += external/zlib external/bzip2
+LOCAL_STATIC_LIBRARIES += libz libbz
+
+include $(BUILD_EXECUTABLE)

@@ -14,18 +14,19 @@ include $(CLEAR_VARS)
 # Build only in eng, so we don't end up with a copy of this in /system
 # on user builds.  (TODO: find a better way to build device binaries
 # needed only for OTA packages.)
-LOCAL_MODULE_TAGS := eng
+LOCAL_MODULE_TAGS := optional
 
 LOCAL_SRC_FILES := $(updater_src_files)
 
-ifeq ($(TARGET_USERIMAGES_USE_EXT4), true)
+#support ext4
+#ifeq ($(TARGET_USERIMAGES_USE_EXT4), true)
 LOCAL_CFLAGS += -DUSE_EXT4
 LOCAL_C_INCLUDES += system/extras/ext4_utils
 LOCAL_STATIC_LIBRARIES += \
     libext4_utils_static \
     libsparse_static \
     libz
-endif
+#endif
 
 ifeq ($(HAVE_SELINUX), true)
 LOCAL_C_INCLUDES += external/libselinux/include

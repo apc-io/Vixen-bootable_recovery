@@ -27,11 +27,18 @@
 #include <assert.h>
 
 #include "mtdutils.h"
+#include <inttypes.h>
+#include "ubi-user.h"
+#define UBI_CTRL_DEV "/dev/ubi_ctrl"
+#define UBI_SYS_PATH "/sys/class/ubi"
+
+#define MEMERASE64 _IOW('M', 20, struct erase_info_user64)
 
 struct MtdPartition {
     int device_index;
-    unsigned int size;
-    unsigned int erase_size;
+    //unsigned int size;
+    uint64_t size;
+	unsigned int erase_size;
     char *name;
 };
 
@@ -128,13 +135,14 @@ mtd_scan_partitions()
      */
     bufp = buf;
     while (nbytes > 0) {
-        int mtdnum, mtdsize, mtderasesize;
-        int matches;
+        int mtdnum, mtderasesize;
+        uint64_t mtdsize;
+		int matches;
         char mtdname[64];
         mtdname[0] = '\0';
         mtdnum = -1;
 
-        matches = sscanf(bufp, "mtd%d: %x %x \"%63[^\"]",
+        matches = sscanf(bufp, "mtd%d: %"SCNx64" %x \"%63[^\"]",
                 &mtdnum, &mtdsize, &mtderasesize, mtdname);
         /* This will fail on the first line, which just contains
          * column headers.
@@ -189,21 +197,137 @@ mtd_find_partition_by_name(const char *name)
     return NULL;
 }
 
+static int64_t gettime()
+{
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (int64_t)(tv.tv_sec * 1000000 + tv.tv_usec);
+}
+
+int wait_for_file(const char *filename, int timeout)
+{
+    struct stat info;
+    time_t timeout_time = gettime() + timeout;
+    int ret = -1;
+
+    while (gettime() < timeout_time && ((ret = stat(filename, &info)) < 0))
+        usleep(10000);
+
+    return ret;
+}
+
+static int ubi_dev_read_int(int dev, const char *file, int def)
+{
+    int fd, val = def;
+    char path[128], buf[64];
+    sprintf(path, UBI_SYS_PATH "/ubi%d/%s", dev, file);
+    wait_for_file(path, 5);
+    fd = open(path, O_RDONLY);
+    if (fd == -1) {
+        return val;
+    }
+    if (read(fd, buf, 64) > 0) {
+        val = atoi(buf);
+    }
+    close(fd);
+    return val;
+}
+
+int ubi_attach_mtd(const char *name, int n)
+{
+    int ret;
+    int mtd_num, ubi_num;
+    int ubi_ctrl, ubi_dev;
+    int vols, avail_lebs, leb_size;
+    char path[128];
+    struct ubi_attach_req attach_req;
+    struct ubi_mkvol_req mkvol_req;
+
+    /*mtd_num = mtd_name_to_number(name);
+    if (mtd_num == -1) {
+        return -1;
+    }*/
+    mtd_num = n;
+    ubi_ctrl = open(UBI_CTRL_DEV, O_RDONLY);
+    if (ubi_ctrl == -1) {
+        return -1;
+    }
+    memset(&attach_req, 0, sizeof(struct ubi_attach_req));
+    attach_req.ubi_num = UBI_DEV_NUM_AUTO;
+    attach_req.mtd_num = mtd_num;
+    ret = ioctl(ubi_ctrl, UBI_IOCATT, &attach_req);
+
+    if (ret == -1) {
+        close(ubi_ctrl);
+        return -1;
+    }
+    ubi_num = attach_req.ubi_num;
+    vols = ubi_dev_read_int(ubi_num, "volumes_count", -1);
+    if (vols == 0) {
+        sprintf(path, "/dev/ubi%d", ubi_num);
+        ubi_dev = open(path, O_RDONLY);
+        if (ubi_dev == -1) {
+            close(ubi_ctrl);
+            return ubi_num;
+        }
+
+        avail_lebs = ubi_dev_read_int(ubi_num, "avail_eraseblocks", 0);
+        leb_size = ubi_dev_read_int(ubi_num, "eraseblock_size", 0);
+        memset(&mkvol_req, 0, sizeof(struct ubi_mkvol_req));
+        mkvol_req.vol_id = UBI_VOL_NUM_AUTO;
+        mkvol_req.alignment = 1;
+        mkvol_req.bytes = (long long)avail_lebs * leb_size;
+        mkvol_req.vol_type = UBI_DYNAMIC_VOLUME;
+        ret = snprintf(mkvol_req.name, UBI_MAX_VOLUME_NAME + 1, "%s", name);
+        mkvol_req.name_len = ret;
+        ioctl(ubi_dev, UBI_IOCMKVOL, &mkvol_req);
+        close(ubi_dev);
+    }
+    close(ubi_ctrl);
+    return ubi_num;
+}
+
+int ubi_detach_dev(int dev)
+{
+	int ret, ubi_ctrl;
+	ubi_ctrl = open(UBI_CTRL_DEV, O_RDONLY);
+	if (ubi_ctrl == -1) {
+	    return -1;
+	}
+	ret = ioctl(ubi_ctrl, UBI_IOCDET, &dev);
+	close(ubi_ctrl);
+	return ret;
+
+}
+int ubi_attached[20], ubi_n[20];
 int
 mtd_mount_partition(const MtdPartition *partition, const char *mount_point,
         const char *filesystem, int read_only)
 {
     const unsigned long flags = MS_NOATIME | MS_NODEV | MS_NODIRATIME;
     char devname[64];
-    int rv = -1;
+    int rv = -1, n = 0;
 
+		if (strcmp(filesystem, "yaffs2") == 0) {
     sprintf(devname, "/dev/block/mtdblock%d", partition->device_index);
+    } else if (strcmp(filesystem, "ubifs") == 0) {
+    		n = ubi_attach_mtd(partition->name, partition->device_index);
+				if (n < 0)
+					return -1;
+				ubi_attached[partition->device_index] = 123;
+				ubi_n[partition->device_index] = n;
+    	sprintf(devname, "/dev/ubi%d_0", n);
+    	wait_for_file(devname, 5);
+    }
+
     if (!read_only) {
         rv = mount(devname, mount_point, filesystem, flags, NULL);
     }
     if (read_only || rv < 0) {
         rv = mount(devname, mount_point, filesystem, flags | MS_RDONLY, 0);
         if (rv < 0) {
+        		if (strcmp(filesystem, "ubifs") == 0)
+        			ubi_detach_dev(n);
             printf("Failed to mount %s on %s: %s\n",
                     devname, mount_point, strerror(errno));
         } else {
@@ -232,6 +356,22 @@ printf("Fixing execute permissions for %s\n", mount_point);
     }
 #endif
     return rv;
+}
+
+int mtd_unmount_partition(const MtdPartition *partition, const char *mount_point,
+        const char *filesystem)
+{
+    char devname[64];
+    int ret = 0;
+
+		if (strcmp(filesystem, "ubifs") == 0) {
+    	if (ubi_attached[partition->device_index] == 123) {
+    		ret = ubi_detach_dev(ubi_n[partition->device_index]);
+    		ubi_attached[partition->device_index] = 0;
+			}
+    }
+
+   return ret;
 }
 
 int
@@ -328,8 +468,8 @@ static int read_block(const MtdPartition *partition, int fd, char *data)
 
 ssize_t mtd_read_data(MtdReadContext *ctx, char *data, size_t len)
 {
-    size_t read = 0;
-    while (read < len) {
+    ssize_t read = 0;
+    while (read < (int) len) {
         if (ctx->consumed < ctx->partition->erase_size) {
             size_t avail = ctx->partition->erase_size - ctx->consumed;
             size_t copy = len - read < avail ? len - read : avail;
@@ -350,7 +490,7 @@ ssize_t mtd_read_data(MtdReadContext *ctx, char *data, size_t len)
         }
 
         // Read the next block into the buffer
-        if (ctx->consumed == ctx->partition->erase_size && read < len) {
+        if (ctx->consumed == ctx->partition->erase_size && read < (int) len) {
             if (read_block(ctx->partition, ctx->fd, ctx->buffer)) return -1;
             ctx->consumed = 0;
         }
@@ -404,6 +544,8 @@ static void add_bad_block_offset(MtdWriteContext *ctx, off_t pos) {
     ctx->bad_block_offsets[ctx->bad_block_count++] = pos;
 }
 
+
+//this function doesn't support partition larger than 4G
 static int write_block(MtdWriteContext *ctx, const char *data)
 {
     const MtdPartition *partition = ctx->partition;
@@ -457,7 +599,7 @@ static int write_block(MtdWriteContext *ctx, const char *data)
             if (retry > 0) {
                 fprintf(stderr, "mtd: wrote block after %d retries\n", retry);
             }
-            fprintf(stderr, "mtd: successfully wrote block at %lx\n", pos);
+            fprintf(stderr, "mtd: successfully wrote block at %llx\n", pos);
             return 0;  // Success!
         }
 
@@ -502,7 +644,7 @@ ssize_t mtd_write_data(MtdWriteContext *ctx, const char *data, size_t len)
     return wrote;
 }
 
-off_t mtd_erase_blocks(MtdWriteContext *ctx, int blocks)
+off64_t mtd_erase_blocks(MtdWriteContext *ctx, int blocks)
 {
     // Zero-pad and write any pending data to get us to a block boundary
     if (ctx->stored > 0) {
@@ -512,8 +654,8 @@ off_t mtd_erase_blocks(MtdWriteContext *ctx, int blocks)
         ctx->stored = 0;
     }
 
-    off_t pos = lseek(ctx->fd, 0, SEEK_CUR);
-    if ((off_t) pos == (off_t) -1) return pos;
+    off64_t pos = lseek64(ctx->fd, 0, SEEK_CUR);
+    if ((off64_t) pos == (off64_t) -1) return pos;
 
     const int total = (ctx->partition->size - pos) / ctx->partition->erase_size;
     if (blocks < 0) blocks = total;
@@ -521,21 +663,25 @@ off_t mtd_erase_blocks(MtdWriteContext *ctx, int blocks)
         errno = ENOSPC;
         return -1;
     }
+	
+    fprintf(stdout, "mtd: pos=%llx, size=%llx, erase_size=%x, blocks=%d, total=%d\n", 
+		    pos, ctx->partition->size, ctx->partition->erase_size, blocks, total);
+
 
     // Erase the specified number of blocks
     while (blocks-- > 0) {
         loff_t bpos = pos;
         if (ioctl(ctx->fd, MEMGETBADBLOCK, &bpos) > 0) {
-            fprintf(stderr, "mtd: not erasing bad block at 0x%08lx\n", pos);
+            fprintf(stderr, "mtd: not erasing bad block at 0x%llx\n", pos);
             pos += ctx->partition->erase_size;
             continue;  // Don't try to erase known factory-bad blocks.
         }
 
-        struct erase_info_user erase_info;
+        struct erase_info_user64 erase_info;
         erase_info.start = pos;
         erase_info.length = ctx->partition->erase_size;
-        if (ioctl(ctx->fd, MEMERASE, &erase_info) < 0) {
-            fprintf(stderr, "mtd: erase failure at 0x%08lx\n", pos);
+        if (ioctl(ctx->fd, MEMERASE64, &erase_info) < 0) {
+            fprintf(stderr, "mtd: erase failure at 0x%llx\n", pos);
         }
         pos += ctx->partition->erase_size;
     }
@@ -547,7 +693,7 @@ int mtd_write_close(MtdWriteContext *ctx)
 {
     int r = 0;
     // Make sure any pending data gets written
-    if (mtd_erase_blocks(ctx, 0) == (off_t) -1) r = -1;
+    if (mtd_erase_blocks(ctx, 0) == (off64_t) -1) r = -1;
     if (close(ctx->fd)) r = -1;
     free(ctx->bad_block_offsets);
     free(ctx->buffer);

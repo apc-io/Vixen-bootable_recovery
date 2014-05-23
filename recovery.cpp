@@ -28,6 +28,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/wait.h>
 
 #include "bootloader.h"
 #include "common.h"
@@ -53,6 +54,7 @@ static const struct option OPTIONS[] = {
   { "wipe_data", no_argument, NULL, 'w' },
   { "wipe_cache", no_argument, NULL, 'c' },
   { "show_text", no_argument, NULL, 't' },
+  { "execute_script", required_argument, NULL, 'e'},
   { "just_exit", no_argument, NULL, 'x' },
   { "locale", required_argument, NULL, 'l' },
   { NULL, 0, NULL, 0 },
@@ -70,6 +72,7 @@ static const char *TEMPORARY_LOG_FILE = "/tmp/recovery.log";
 static const char *TEMPORARY_INSTALL_FILE = "/tmp/last_install";
 static const char *SIDELOAD_TEMP_DIR = "/tmp/sideload";
 
+static const char *SYSTEM_DEFAULT_PROP = "/system/default.prop";
 RecoveryUI* ui = NULL;
 char* locale = NULL;
 
@@ -783,6 +786,68 @@ print_property(const char *key, const char *name, void *cookie) {
     printf("%s=%s\n", key, name);
 }
 
+static int executeScript(const char* scriptName, const char* currentVer){
+    pid_t pid = fork();
+    if(pid < 0) return -1;
+
+    if (pid == 0) {
+        // child side of the fork
+        // child process
+        printf("before ececute %s %s\n", scriptName, currentVer);
+        int result = execl("/bin/busybox", "sh", scriptName, currentVer, NULL);
+        // this should not return
+        fprintf(stderr, "OOPS! execl returned %d, errno: %d\n", result, errno);
+    } else  {
+        // parent side of the fork
+        int status;
+		wait(&status);
+        
+        if (WIFEXITED(status))
+			printf("child has exited with status %d.\n", WEXITSTATUS(status));
+        else
+			printf("child has not terminated normally.\n");
+    }
+	return 0;
+}
+
+static void stopWmtKernelAnimation(){
+	FILE * fp = NULL;
+	fp = fopen("/proc/kernel_animation", "w+");
+	if(fp != NULL){
+        char buf[1]={'0'};
+		fwrite(buf, 1, 1, fp);
+		fclose(fp);
+	}
+}
+
+const char * PKG_VER_STR="ro.wmt.pkgver=";
+
+static void getCurrentVersion(char *version, int verLen){
+    FILE * fp = NULL;
+    if(ensure_path_mounted(SYSTEM_DEFAULT_PROP) == 0){
+        fp = fopen(SYSTEM_DEFAULT_PROP, "r+");
+        if(fp != NULL){
+           char line[512]={0};
+           while(fgets(line, sizeof(line), fp)){
+               if(strstr(line, PKG_VER_STR)){
+                   strncpy(version, line+strlen(PKG_VER_STR), verLen);
+                   int len = strlen(version);
+                   if(len < verLen){
+                      if(version[len-1]=='\n'){
+                         version[len-1]=0;
+                      }
+                   }else{
+                       version[verLen-1]=0;
+                   }
+                   break;
+               }
+           }
+           fclose(fp);
+        }        
+		ensure_path_unmounted(SYSTEM_DEFAULT_PROP);			
+	}        
+}
+
 static void
 load_locale_from_cache() {
     FILE* fp = fopen_path(LOCALE_FILE, "r");
@@ -801,7 +866,7 @@ load_locale_from_cache() {
         check_and_fclose(fp, LOCALE_FILE);
     }
 }
-
+extern int ubi_attached[20];
 int
 main(int argc, char **argv) {
     time_t start = time(NULL);
@@ -823,6 +888,8 @@ main(int argc, char **argv) {
     }
 
     printf("Starting recovery on %s", ctime(&start));
+    for (int i=0;i<20;i++)
+    	ubi_attached[i] = 0;
 
     load_volume_table();
     get_args(&argc, &argv);
@@ -830,6 +897,7 @@ main(int argc, char **argv) {
     int previous_runs = 0;
     const char *send_intent = NULL;
     const char *update_package = NULL;
+    const char *execute_script = NULL;
     int wipe_data = 0, wipe_cache = 0, show_text = 0;
     bool just_exit = false;
 
@@ -842,6 +910,7 @@ main(int argc, char **argv) {
         case 'w': wipe_data = wipe_cache = 1; break;
         case 'c': wipe_cache = 1; break;
         case 't': show_text = 1; break;
+		case 'e': execute_script = optarg; break;
         case 'x': just_exit = true; break;
         case 'l': locale = optarg; break;
         case '?':
@@ -900,6 +969,10 @@ main(int argc, char **argv) {
     }
     printf("\n");
 
+    char currentVer[512]={0};
+    getCurrentVersion(currentVer, sizeof(currentVer));
+    printf("current version : %s\n", currentVer);
+
     property_list(print_property, NULL);
     printf("\n");
 
@@ -907,6 +980,15 @@ main(int argc, char **argv) {
 
     if (update_package != NULL) {
         status = install_package(update_package, &wipe_cache, TEMPORARY_INSTALL_FILE);
+
+		if(status == INSTALL_SUCCESS && execute_script != NULL){
+	        if(ensure_path_mounted(execute_script) == 0){
+			    executeScript(execute_script, currentVer);
+				sync();
+				ensure_path_unmounted(execute_script);			
+			}    
+        }
+
         if (status == INSTALL_SUCCESS && wipe_cache) {
             if (erase_volume("/cache")) {
                 LOGE("Cache wipe (requested by package) failed.");
@@ -916,6 +998,15 @@ main(int argc, char **argv) {
     } else if (wipe_data) {
         if (device->WipeData()) status = INSTALL_ERROR;
         if (erase_volume("/data")) status = INSTALL_ERROR;
+		
+		if(execute_script != NULL){
+	        if(ensure_path_mounted(execute_script) == 0){
+			    executeScript(execute_script, currentVer);
+				sync();
+				ensure_path_unmounted(execute_script);			
+			}    
+        }
+
         if (wipe_cache && erase_volume("/cache")) status = INSTALL_ERROR;
         if (status != INSTALL_SUCCESS) ui->Print("Data wipe failed.\n");
     } else if (wipe_cache) {
@@ -935,6 +1026,17 @@ main(int argc, char **argv) {
 
     // Otherwise, get ready to boot the main system...
     finish_recovery(send_intent);
+    printf("status = %d, update_package = %s\n", status, update_package);
+    if (status == INSTALL_SUCCESS && update_package != NULL){
+    // If install success, delete update_package
+       if(ensure_path_mounted(update_package)==0){
+           const char* path=update_package;
+           unlink(path);
+           printf("after unlink %s\n", path);
+		   sync();
+		   ensure_path_unmounted(update_package);	           
+       }
+    }
     ui->Print("Rebooting...\n");
     android_reboot(ANDROID_RB_RESTART, 0, 0);
     return EXIT_SUCCESS;

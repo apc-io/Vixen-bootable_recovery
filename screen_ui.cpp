@@ -104,6 +104,7 @@ void ScreenRecoveryUI::draw_install_overlay_locked(int frame) {
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::draw_background_locked(Icon icon)
 {
+    bool drawText = true;
     pagesIdentical = false;
     gr_color(0, 0, 0, 255);
     gr_fill(0, 0, gr_fb_width(), gr_fb_height());
@@ -117,19 +118,45 @@ void ScreenRecoveryUI::draw_background_locked(Icon icon)
         int textWidth = gr_get_width(text_surface);
         int textHeight = gr_get_height(text_surface);
 
+        int progressHeight = gr_get_height(progressBarEmpty);
+        int progressY = (3*gr_fb_height() + iconHeight - 2*progressHeight)/4;        
+
         int iconX = (gr_fb_width() - iconWidth) / 2;
         int iconY = (gr_fb_height() - (iconHeight+textHeight+40)) / 2;
 
         int textX = (gr_fb_width() - textWidth) / 2;
         int textY = ((gr_fb_height() - (iconHeight+textHeight+40)) / 2) + iconHeight + 40;
 
+        //small screen, text and progress bar may overlap
+        if(progressY >= textY && progressY <= textY+textHeight){
+            int oldTextY = textY;
+            int oldIconY = iconY;
+            textY = progressY - textHeight - 2;
+            if(textY >= iconY && textY <= iconY+iconHeight){
+                 //overlap with icon again
+                 iconY -= iconY+iconHeight - textY;                 
+            }
+            if(iconY < 0){
+               fprintf(stderr, "background text will not be draw, "
+                               "oldTextY = %d, oldIconY=%d, progressY = %d, iconY = %d,"
+                               " textHeight = %d, progressHeight = %d, iconHeight=%d, textY=%d\n",
+                               oldTextY, oldIconY, progressY, iconY, textHeight, progressHeight, iconHeight, textY);
+               
+               drawText = false;
+               textY = oldTextY;
+               iconY = oldIconY;
+            }
+        }
+
         gr_blit(surface, 0, 0, iconWidth, iconHeight, iconX, iconY);
         if (icon == INSTALLING_UPDATE || icon == ERASING) {
             draw_install_overlay_locked(installingFrame);
         }
 
-        gr_color(255, 255, 255, 255);
-        gr_texticon(textX, textY, text_surface);
+        if(drawText){
+           gr_color(255, 255, 255, 255);
+           gr_texticon(textX, textY, text_surface);
+        }
     }
 }
 
