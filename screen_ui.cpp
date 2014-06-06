@@ -63,9 +63,9 @@ ScreenRecoveryUI::ScreenRecoveryUI() :
     text_col(0),
     text_row(0),
     text_top(0),
-    show_text(false),
+    show_text(true),
     show_text_ever(false),
-    show_menu(false),
+    show_menu(true),
     menu_top(0),
     menu_items(0),
     menu_sel(0),
@@ -232,12 +232,12 @@ void ScreenRecoveryUI::draw_screen_locked()
     draw_background_locked(currentIcon);
     draw_progress_locked();
 
-    if (show_text) {
+    if (true) {
         gr_color(0, 0, 0, 160);
         gr_fill(0, 0, gr_fb_width(), gr_fb_height());
 
         int i = 0;
-        if (show_menu) {
+        if (true) {
             gr_color(64, 96, 255, 255);
             gr_fill(0, (menu_top+menu_sel) * CHAR_HEIGHT,
                     gr_fb_width(), (menu_top+menu_sel+1)*CHAR_HEIGHT+1);
@@ -276,7 +276,7 @@ void ScreenRecoveryUI::update_screen_locked()
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::update_progress_locked()
 {
-    if (show_text || !pagesIdentical) {
+    if (true || !pagesIdentical) {
         draw_screen_locked();    // Must redraw the whole screen
         pagesIdentical = true;
     } else {
@@ -570,6 +570,7 @@ void ScreenRecoveryUI::EndMenu() {
 
 bool ScreenRecoveryUI::IsTextVisible()
 {
+    return true;
     pthread_mutex_lock(&updateMutex);
     int visible = show_text;
     pthread_mutex_unlock(&updateMutex);
@@ -587,7 +588,7 @@ bool ScreenRecoveryUI::WasTextEverVisible()
 void ScreenRecoveryUI::ShowText(bool visible)
 {
     pthread_mutex_lock(&updateMutex);
-    show_text = visible;
+    show_text = true;
     if (show_text) show_text_ever = 1;
     update_screen_locked();
     pthread_mutex_unlock(&updateMutex);

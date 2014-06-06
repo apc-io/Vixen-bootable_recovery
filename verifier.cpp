@@ -43,6 +43,8 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         return VERIFY_FAILURE;
     }
 
+    LOGI("--Opened file: %s\n", path);
+
     // An archive with a whole-file signature will end in six bytes:
     //
     //   (2-byte signature start) $ff $ff (2-byte comment size)
@@ -59,6 +61,7 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         fclose(f);
         return VERIFY_FAILURE;
     }
+    LOGI("--Seek to footer done!\n");
 
     unsigned char footer[FOOTER_SIZE];
     if (fread(footer, 1, FOOTER_SIZE, f) != FOOTER_SIZE) {
@@ -66,11 +69,14 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         fclose(f);
         return VERIFY_FAILURE;
     }
+    LOGI("--Read the footer!\n");
 
     if (footer[2] != 0xff || footer[3] != 0xff) {
         fclose(f);
         return VERIFY_FAILURE;
     }
+
+    LOGI("--Verify mid-footer done!\n");
 
     size_t comment_size = footer[4] + (footer[5] << 8);
     size_t signature_start = footer[0] + (footer[1] << 8);
@@ -84,6 +90,8 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         return VERIFY_FAILURE;
     }
 
+    LOGI("-- Signature length is ok!\n");
+
 #define EOCD_HEADER_SIZE 22
 
     // The end-of-central-directory record is 22 bytes plus any
@@ -95,6 +103,8 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         fclose(f);
         return VERIFY_FAILURE;
     }
+
+    LOGI("-- seek to eocd done!\n");
 
     // Determine how much of the file is covered by the signature.
     // This is everything except the signature data and length, which
@@ -114,6 +124,8 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         return VERIFY_FAILURE;
     }
 
+    LOGI("-- Read eocd!\n");
+
     // If this is really is the EOCD record, it will begin with the
     // magic number $50 $4b $05 $06.
     if (eocd[0] != 0x50 || eocd[1] != 0x4b ||
@@ -122,6 +134,7 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         fclose(f);
         return VERIFY_FAILURE;
     }
+    LOGI("-- eocd begin is ok!\n");
 
     size_t i;
     for (i = 4; i < eocd_size-3; ++i) {
@@ -136,6 +149,7 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
             return VERIFY_FAILURE;
         }
     }
+    LOGI("-- ok, dont understand about this, but done! :)\n");
 
 #define BUFFER_SIZE 4096
 
@@ -147,6 +161,8 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
         fclose(f);
         return VERIFY_FAILURE;
     }
+
+    LOGI("-- Malloc the buffer!\n");
 
     double frac = -1.0;
     size_t so_far = 0;
@@ -170,6 +186,7 @@ int verify_file(const char* path, const RSAPublicKey *pKeys, unsigned int numKey
     fclose(f);
     free(buffer);
 
+    LOGI("--- numKeys is %d\n", numKeys);
     const uint8_t* sha1 = SHA_final(&ctx);
     for (i = 0; i < numKeys; ++i) {
         // The 6 bytes is the "(signature_start) $ff $ff (comment_size)" that

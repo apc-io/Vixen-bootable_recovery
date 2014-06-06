@@ -415,7 +415,7 @@ static RSAPublicKey* load_key_from_env(int *numKeys){
      *numKeys = 0;
      if(wmt_getsyspara(PUBLIC_KEY_ENV_NAME, envval, &envvallen)){
          //fail to get public key env
-         LOGE("fail to load public key!\n");
+         LOGE("fail to load public key from env!\n");
          return NULL;
      }
     
@@ -456,12 +456,13 @@ really_install_package(const char *path, int* wipe_cache)
     ui->Print("Opening update package...\n");
 
     int numKeys;
-    LOGI("trying to load keys\n");
+    LOGI("trying to load keys from env\n");
     RSAPublicKey* loadedKeys = load_key_from_env(&numKeys);
     if(loadedKeys == NULL){
+        LOGE("Failed to load keys from env\n");
        loadedKeys = load_keys(PUBLIC_KEYS_FILE, &numKeys);
         if (loadedKeys == NULL) {
-            LOGE("Failed to load keys\n");
+            LOGE("Failed to load keys from PUBLIC_KEYS_FILE\n");
             return INSTALL_CORRUPT;
         }
         LOGI("%d key(s) loaded from %s\n", numKeys, PUBLIC_KEYS_FILE);
@@ -480,7 +481,9 @@ really_install_package(const char *path, int* wipe_cache)
     LOGI("verify_file returned %d\n", err);
     if (err != VERIFY_SUCCESS) {
         LOGE("signature verification failed\n");
-        return INSTALL_CORRUPT;
+        // return INSTALL_CORRUPT;
+        LOGI("But just ignore it :)\n");
+        ui->Print("But just ignore it :)\n");
     }
 
     /* Try to open the package.
